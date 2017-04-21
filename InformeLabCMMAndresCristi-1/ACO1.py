@@ -92,10 +92,14 @@ class ACOSchedule(object):
 
 	def Colony(self,m,Lambda):
 		#Runs an iteration of the ACS algorithm. m is the number of Ants and Lambda is for choosing the matrix of pheromones.
+		self.iterationBPS = []
 		for j in range(m):
 			[Path,ObsQ,TimeQ]=self.Ants(Lambda)
-			self.Update_BPS(Path,ObsQ,TimeQ)
-		self.Update_Pheromone()
+			self.Update_iterationBPS(Path,ObsQ,TimeQ)
+		for j in range(len(self.iterationBPS)):
+			B_aux = self.iterationBPS[j]
+			self.Update_BPS(B_aux[0],B_aux[1],B_aux[2])
+		self.Update_Pheromone_Iteration()
 		return
 
 
@@ -213,7 +217,29 @@ class ACOSchedule(object):
 				print 'new non dominated solution',datetime.datetime.now()
 			self.BPS=BPS_Aux
 		return
-
+	
+	def Update_iterationBPS(self,path,ObsQ,TimeQ):
+		#Update the list of Pareto eficient paths, with path and it's objective values ObsQ and TimeQ (only if it is non dominated).
+		if len(self.iterationBPS)==0:
+			self.iterationBPS.append([path,ObsQ,TimeQ])
+			self.NormObsQ=ObsQ
+			self.NormTimeQ=TimeQ
+		else:
+			BPS_Aux=[]
+			flag_pareto=1
+			while 0<len(self.iterationBPS):
+				A=self.iterationBPS.pop()
+				if (((ObsQ>A[1])*(TimeQ>=A[2]))+((ObsQ>=A[1])*(TimeQ>A[2])))==0:
+					BPS_Aux.append(A)
+					if (ObsQ<=A[1])*(TimeQ<=A[2]):
+						flag_pareto=0
+			if flag_pareto:
+				BPS_Aux.append([path,ObsQ,TimeQ])
+				self.ParetoHistorial.append([ObsQ,TimeQ,self.IterationNumber])
+				print 'new non dominated solution',datetime.datetime.now()
+			self.iterationBPS=BPS_Aux
+		return	
+	
 	def Update_Pheromone(self):
 		for j in range(len(self.BPS)):
 			addObsQ=self.BPS[j][1]/self.NormObsQ
@@ -225,6 +251,18 @@ class ACOSchedule(object):
 				self.Ph_TimeQ[path[i,1]][path[i,0],path[i+1,0]]*=(1-self.rho)
 				self.Ph_TimeQ[path[i,1]][path[i,0],path[i+1,0]]+=self.rho*addTimeQ
 		return
+	
+	def Update_Pheromone_Iteration(self):
+		for j in range(len(self.iterationBPS)):
+			addObsQ=self.iterationBPS[j][1]/self.NormObsQ
+			addTimeQ=self.iterationBPS[j][2]/self.NormTimeQ
+			path=self.iterationBPS[j][0]
+			for i in range(np.size(path,0)-1):
+				self.Ph_ObsQ[path[i,1]][path[i,0],path[i+1,0]]*=(1-self.rho)
+				self.Ph_ObsQ[path[i,1]][path[i,0],path[i+1,0]]+=self.rho*addObsQ
+				self.Ph_TimeQ[path[i,1]][path[i,0],path[i+1,0]]*=(1-self.rho)
+				self.Ph_TimeQ[path[i,1]][path[i,0],path[i+1,0]]+=self.rho*addTimeQ
+		return	
 
 
 	def ObjectiveValues(self,SCH):
