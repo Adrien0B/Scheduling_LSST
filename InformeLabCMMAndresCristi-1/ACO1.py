@@ -26,7 +26,7 @@ class ACOSchedule(object):
 		self.rho=1		#Parameter for pheromone updating in ACS
 		self.NormObsQ=1	
 		self.NormTimeQ=1
-		self.m=10		#Number of ants per iteration.
+		self.m=60		#Number of ants per iteration.
 		#------------------------
 
 		#Compute Night parameters
@@ -57,7 +57,7 @@ class ACOSchedule(object):
 		print self.ObservationTime
 
 		#Best (in Pareto's sense) solutions
-		self.BPS= []	
+		self.BPS= []
 			#This list stores the solutions. The solutions are also lists with the form [path,ObsQ,TimeQ].
 		#---------------------------------
 
@@ -85,6 +85,7 @@ class ACOSchedule(object):
 		for j in range(AntIterations):
 			print j,len(self.BPS), datetime.datetime.now()
 			self.IterationNumber=j
+			Lambda = j/(self.m-1)
 			self.Colony(self.m,Lambda)
 		return
 
@@ -125,10 +126,10 @@ class ACOSchedule(object):
 			TotalT+=self.Dist[ActualPeriod][ActualPoint,index]+self.ObservationTime
 			NewPeriod=min(int(np.floor(TotalT/self.Interval)),self.NightDisc-1)
 
-			self.Ph_ObsQ[ActualPeriod][ActualPoint,index]*=(1-self.chi)
-			self.Ph_ObsQ[ActualPeriod][ActualPoint,index]+=self.chi
-			self.Ph_TimeQ[ActualPeriod][ActualPoint,index]*=(1-self.chi)
-			self.Ph_TimeQ[ActualPeriod][ActualPoint,index]+=self.chi
+			#self.Ph_ObsQ[ActualPeriod][ActualPoint,index]*=(1-self.chi)
+			#self.Ph_ObsQ[ActualPeriod][ActualPoint,index]+=self.chi
+			#self.Ph_TimeQ[ActualPeriod][ActualPoint,index]*=(1-self.chi)
+			#self.Ph_TimeQ[ActualPeriod][ActualPoint,index]+=self.chi
 
 			ActualPoint=index
 			ActualPeriod=NewPeriod
@@ -283,10 +284,9 @@ class ACOSchedule(object):
 		self.Ph_TimeQ=M
 		return
 	def init_Pheromone(self):
-		NX=np.size(self.X,0)
 		P=[]
 		for i in range(self.NightDisc):
-			P.append(np.ones((NX,NX)))
+			P.append(np.ones((self.NX,self.NX)))
 		return P
 
 	def TimeFunc(self,t):
@@ -317,6 +317,16 @@ class ACOSchedule(object):
 		PHist=np.array(self.ParetoHistorial)
 		plt.scatter(PHist[:,0],PHist[:,1],c=np.arange(np.size(PHist,0)),alpha=0.7,s=100)
 		plt.show()
+	
+	def PlotParetoFront(self):
+		#Plots the the non dominated solutions found in the end
+		PFX = [self.BPS[i][1] for i in range(len(self.BPS))]
+		PFY = [self.BPS[i][2] for i in range(len(self.BPS))]
+		plt.scatter(PFX,PFY)
+		plt.show()	
+
+
+
 
 
 
@@ -326,7 +336,7 @@ class ACOSchedule(object):
 obs=ephem.Observer()
 obs.lat="-33:27:00"
 obs.lon="-70:40:00"
-obs.date="2015/03/12 23:00:00"
+obs.date="2017/03/12 23:00:00"
 #-------------------
 
 
@@ -345,12 +355,15 @@ Num=np.size(X,0)
 
 #Times since last visit
 #T = npr.randint(6, size=Num)+1
-T=np.load('Times.npy')		#This only works for Nside=16.
+if Nside == 32:
+	T=np.load('Times32.npy')
+else:
+	T=np.load('Times.npy')
 #-------------------------
 
 
 ACO=ACOSchedule(X,obs,10,T)
-ACO.RunACO_Pheromone(10,1000)
+ACO.RunACO_Pheromone(0,100)
 print len(ACO.BPS)
 
 schedAA=ACO.AZALT(ACO.BPS[0][0])
@@ -361,6 +374,7 @@ np.save('schedAA',schedAA)
 np.save('colores',colores)
 np.save('ParetoHistorial',np.array(ACO.ParetoHistorial))
 ACO.PlotParetoHistorial()
+ACO.PlotParetoFront()
 
 with open('BPS','wb') as f:
 	pickle.dump(ACO.BPS,f)
