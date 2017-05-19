@@ -31,6 +31,7 @@ class ACOSchedule(object):
         # ------------------------
 
         # Compute Night parameters
+        self.obs = observer  # Observer instance of pyephem.
         sun = ephem.Sun()
         sun.compute(observer)
         self.NightEnd = observer.next_rising(sun)
@@ -44,14 +45,19 @@ class ACOSchedule(object):
         # ----------------------
 
         self.X = X  # DEC-RA of discretization of the sky.
+        self.X_obs = []
+        for i in range(self.NightDisc):
+            self.obs.date = self.NightBeg + (i + 0.5) * self.Interval
+            self.X_obs.append(np.transpose(np.array(conversion(self.obs, self.X[:, 0], self.X[:, 1]))))  # [AZ,ALT] of X for the observer.
         self.NX = np.size(X, 0)
-        self.obs = observer  # Observer instance of pyephem.
         self.T = T  # Time since last visit for X.
         self.Ph_ObsQ = self.init_Pheromone()  # Pheromone for quality of the observations (little zenith angle).
         self.Ph_TimeQ = self.init_Pheromone()  # Pheromone for correct distance in time between obs of the same point.
         self.Dist = self.DiscreteDistances()  # Distances between points
-        self.ZenAn = self.DiscreteZenithAngle()
-        self.AzAn = self.DiscreteAzimuth()
+        self.ZenAn = [np.pi / 2 - i[:, 1] for i in self.X_obs]
+        self.AzAn = [i[:, 0] for i in self.X_obs]
+        #self.ZenAn = self.DiscreteZenithAngle()
+        #self.AzAn = self.DiscreteAzimuth()
         self.Fact = self.DiscreteFactibles()
         [self.Times,self.MAA] = self.MoonPosition()
         self.Epsilon = 0.5
@@ -153,7 +159,7 @@ class ACOSchedule(object):
         plt.plot(np.cumsum(etaT3))
         plt.show()"""
 
-        F = np.transpose(np.ones(np.size(self.X,0)).reshape(np.size(self.X,0),1)*self.Fact[0])
+        """F = np.transpose(np.ones(np.size(self.X,0)).reshape(np.size(self.X,0),1)*self.Fact[0])
 
         A = np.zeros((np.size(self.X,0),np.size(self.X,0)))
         minA = []
@@ -182,6 +188,14 @@ class ACOSchedule(object):
         plt.show()
         #print minA
         #print maxA
+        """
+
+        plt.matshow(self.Ph_ObsQ)
+        plt.show()
+        print np.min(self.Ph_ObsQ), np.max(self.Ph_ObsQ)
+        plt.matshow(self.Ph_TimeQ)
+        plt.show()
+        print np.min(self.Ph_TimeQ), np.max(self.Ph_TimeQ)
 
 
         self.iterationBPS = []
@@ -239,22 +253,22 @@ class ACOSchedule(object):
             eta = np.power(etaD,3) * np.power(etaZ,2) * np.power(etaT,1)
 
             if U <= Lambda:
-                tau = self.Ph_ObsQ[ActualPeriod][ActualPoint, :] * self.Fact[ActualPeriod] * NotVisited
+                tau = self.Ph_ObsQ[ActualPoint, :] * self.Fact[ActualPeriod] * NotVisited
                 tau = tau / np.sum(tau)
                 index = self.ChooseStep(tau * eta)
 
             else:
-                tau = self.Ph_TimeQ[ActualPeriod][ActualPoint, :] * self.Fact[ActualPeriod] * NotVisited
+                tau = self.Ph_TimeQ[ActualPoint, :] * self.Fact[ActualPeriod] * NotVisited
                 tau = tau / np.sum(tau)
                 index = self.ChooseStep(tau * eta)
 
             TotalT += self.Dist[ActualPeriod][ActualPoint, index] + self.ObservationTime
             NewPeriod = min(int(np.floor(TotalT / self.Interval)), self.NightDisc - 1)
 
-            self.Ph_ObsQ[ActualPeriod][ActualPoint, index] *= (1 - self.chi)
-            self.Ph_ObsQ[ActualPeriod][ActualPoint, index] += self.chi
-            self.Ph_TimeQ[ActualPeriod][ActualPoint, index] *= (1 - self.chi)
-            self.Ph_TimeQ[ActualPeriod][ActualPoint, index] += self.chi
+            self.Ph_ObsQ[ActualPoint, index] *= (1 - self.chi)
+            self.Ph_ObsQ[ActualPoint, index] += self.chi
+            self.Ph_TimeQ[ActualPoint, index] *= (1 - self.chi)
+            self.Ph_TimeQ[ActualPoint, index] += self.chi
 
             ActualPoint = index
             ActualPeriod = NewPeriod
@@ -336,7 +350,7 @@ class ACOSchedule(object):
             if flag_pareto:
                 BPS_Aux.append([path, ObsQ, TimeQ])
                 self.ParetoHistorial.append([ObsQ, TimeQ, self.IterationNumber])
-                print 'new non dominated solution', datetime.datetime.now()
+                print 'new non dominated solution', datetime.datetime.now(), 'Obs = ', ObsQ, 'Time = ',TimeQ
             self.BPS = BPS_Aux
         return
 
@@ -364,16 +378,16 @@ class ACOSchedule(object):
 
     def Update_Pheromone(self):
         for j in range(len(self.BPS)):
-            addObsQ = self.BPS[j][1] / self.NormObsQ
-            addTimeQ = self.BPS[j][2] / self.NormTimeQ
+            addObsQ = 10*self.BPS[j][1] / self.NormObsQ
+            addTimeQ = 10*self.BPS[j][2] / self.NormTimeQ
             path = self.BPS[j][0]
             for i in range(np.size(path, 0) - 1):
-                self.Ph_ObsQ[path[i, 1]][path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
-                # self.Ph_ObsQ[path[i,1]][path[i,0],path[i+1,0]]+=self.rho*addObsQ
-                self.Ph_ObsQ[path[i, 1]][path[i, 0], path[i + 1, 0]] += addObsQ
-                self.Ph_TimeQ[path[i, 1]][path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
-                # self.Ph_TimeQ[path[i,1]][path[i,0],path[i+1,0]]+=self.rho*addTimeQ
-                self.Ph_TimeQ[path[i, 1]][path[i, 0], path[i + 1, 0]] += addTimeQ
+                self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
+                # self.Ph_ObsQ[path[i,0],path[i+1,0]]+=self.rho*addObsQ
+                self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] += addObsQ
+                self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
+                # self.Ph_TimeQ[path[i,0],path[i+1,0]]+=self.rho*addTimeQ
+                self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] += addTimeQ
         return
 
     def Update_Pheromone_Iteration(self):
@@ -382,10 +396,10 @@ class ACOSchedule(object):
             addTimeQ = 10*self.iterationBPS[j][2] / self.NormTimeQ
             path = self.iterationBPS[j][0]
             for i in range(np.size(path, 0) - 1):
-                self.Ph_ObsQ[path[i, 1]][path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
-                self.Ph_ObsQ[path[i, 1]][path[i, 0], path[i + 1, 0]] += addObsQ
-                self.Ph_TimeQ[path[i, 1]][path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
-                self.Ph_TimeQ[path[i, 1]][path[i, 0], path[i + 1, 0]] += addTimeQ
+                self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
+                self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] += addObsQ
+                self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
+                self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] += addTimeQ
         return
 
     def ObjectiveValues(self, SCH):
@@ -405,7 +419,7 @@ class ACOSchedule(object):
             self.obs.date = self.NightBeg + (i + 0.5) * self.Interval
             D.append(np.zeros((NX, NX)))
             for j in range(NX):
-                D[i][j, :] = Time_dist(self.X, self.obs, self.X[j, :])
+                D[i][j, :] = Time_dist(self.X_obs[i], self.obs, self.X_obs[i][j, :])
         self.obs.date = self.NightBeg
         return D
 
@@ -446,9 +460,7 @@ class ACOSchedule(object):
         return
 
     def init_Pheromone(self):
-        P = []
-        for i in range(self.NightDisc):
-            P.append(np.ones((self.NX, self.NX)))
+        P = np.ones((self.NX, self.NX))
         return P
 
     def TimeFunc(self, t):
@@ -460,9 +472,8 @@ class ACOSchedule(object):
         #Obsolete
         print 'evaporate'
         # Recieves alpha in (0,1) and evaporates pheromones multiplying by alpha the matrices.
-        for i in range(self.NightDisc):
-            self.Ph_ObsQ[i] *= alphaObsQ
-            self.Ph_TimeQ[i] *= alphaTimeQ
+        self.Ph_ObsQ *= alphaObsQ
+        self.Ph_TimeQ *= alphaTimeQ
         return
 
     def AZALT(self, Path):
@@ -490,16 +501,22 @@ class ACOSchedule(object):
             MAA.append([moon.ra, moon.dec])
         return [np.array(Times), np.array(MAA)]
 
-    def PlotParetoHistorial(self):
+    def PlotParetoHistorial(self,title=""):
         # Plots the objective values of the non dominated solutions found during the whole process, even if they were eliminated.
         # It shows the evolution of the solutions encountered.
         PHist = np.array(self.ParetoHistorial)
+        fig = plt.figure()
         plt.scatter(PHist[:, 0], PHist[:, 1], c=np.arange(np.size(PHist, 0)), alpha=0.7, s=100)
+        plt.title(title)
         plt.show()
+        return fig
 
-    def PlotParetoFront(self):
+    def PlotParetoFront(self,title=""):
         # Plots the the non dominated solutions found in the end
         PFX = [self.BPS[i][1] for i in range(len(self.BPS))]
         PFY = [self.BPS[i][2] for i in range(len(self.BPS))]
+        fig = plt.figure()
         plt.scatter(PFX, PFY)
+        plt.title(title)
         plt.show()
+        return fig
