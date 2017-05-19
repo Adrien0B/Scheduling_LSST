@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 from matplotlib import animation
 
-import healpy as hpy
+#import healpy as hpy
 import numpy as np
 
 
