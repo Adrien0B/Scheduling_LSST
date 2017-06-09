@@ -11,7 +11,7 @@ from functions import deconversion
 from functions import factibles
 
 
-class ACOSchedule(object):
+class ACOScheduleGlouton(object):
     def __init__(self, X, observer, ND, T):
         # This is the inicialization function. It recieves an array X of points in (DEC,RA) coordinates (a two column numpy array),
         # an observer instance of the ephem library, the number of intervals ND for the discretization of the night, and the times
@@ -21,7 +21,7 @@ class ACOSchedule(object):
         self.NightDisc = ND  # Number of intervals for discretization of the night.
 
         # ACS parameters---------
-        self.q_0 = 0.2  # Parameter for step choosing in ACS
+        self.q_0 = 1  # Parameter for step choosing in ACS
         self.chi = 0.1  # Parameter for pheromone wasting in ACS
         self.rho = 0.1  # Parameter for pheromone updating in ACS
         self.NormObsQ = 1
@@ -80,6 +80,7 @@ class ACOSchedule(object):
         # This list stores the solutions. The solutions are also lists with the form [path,ObsQ,TimeQ].
         # ---------------------------------
 
+        self.m = np.size(self.Fact[0][self.Fact[0]!=0])
         self.IterationNumber = -1
         self.ParetoHistorial = []
 
@@ -101,7 +102,7 @@ class ACOSchedule(object):
 
         print '*****************Ants******************'
         self.AntIterations = AntIterations
-        for j in range(AntIterations):
+        for j in range(1):
             print j, len(self.BPS), datetime.datetime.now()
             self.IterationNumber = j
             self.Colony(self.m)
@@ -218,8 +219,9 @@ class ACOSchedule(object):
 
 
         self.iterationBPS = []
+        A = np.array(np.cumsum(np.ones(np.size(self.Fact[0]))) - 1, dtype=int)[self.Fact[0] != 0]
         for j in range(m):
-            Lambda = j / (self.m - 1)
+            Lambda = A[j]
             [Path, ObsQ, TimeQ] = self.Ants(Lambda)
             self.Update_iterationBPS(Path, ObsQ, TimeQ)
 
@@ -240,15 +242,8 @@ class ACOSchedule(object):
         NotVisited = np.ones(self.NX)
 
         U = npr.rand()
-        if U <= Lambda:
-            tau = self.Ph_ObsQBeg * self.Fact[0]
-            tau = tau / np.sum(tau)
-            index = self.ChooseStep(tau)
+        index = Lambda
 
-        else:
-            tau = self.Ph_TimeQBeg * self.Fact[0]
-            tau = tau / np.sum(tau)
-            index = self.ChooseStep(tau)
         Path.append([index, 0])
         ActualPoint = index
         ActualPeriod = 0
@@ -257,7 +252,6 @@ class ACOSchedule(object):
 
 
         while TotalT <= self.NightLength:
-            U = npr.rand()
             #eta=np.power(((np.power(2,self.T[ActualPeriod])+128)/192.)/((self.Dist[ActualPeriod][ActualPoint,:]+0.0001)+(self.ZenAn[ActualPeriod]+np.pi)/(3*np.pi/2)),1)
             #eta = np.power(((np.power(2, self.T[ActualPeriod]) + 128) / 192.) / (self.Dist[ActualPeriod][ActualPoint, :] + 0.0001),self.beta)
             #eta = 1./(self.Dist[ActualPeriod][ActualPoint,:]+np.min(filter(lambda x:x>0,self.Dist[ActualPeriod][ActualPoint,:]))/10.)
@@ -282,25 +276,11 @@ class ACOSchedule(object):
             etaT = etaT / sum(etaT)
 
             eta = np.power(etaD, 2) * np.power(etaZ, 2) * np.power(etaT, 1)
-            #eta = etaD * etaZ * etaT
 
-            if U <= Lambda:
-                tau = self.Ph_ObsQ[ActualPoint, :] * self.Fact[ActualPeriod] * NotVisited
-                tau = tau / np.sum(tau)
-                index = self.ChooseStep(tau * eta)
-
-            else:
-                tau = self.Ph_TimeQ[ActualPoint, :] * self.Fact[ActualPeriod] * NotVisited
-                tau = tau / np.sum(tau)
-                index = self.ChooseStep(tau * eta)
+            index = self.ChooseStep(eta)
 
             TotalT += self.Dist[ActualPeriod][ActualPoint, index] + self.ObservationTime
             NewPeriod = min(int(np.floor(TotalT / self.Interval)), self.NightDisc - 1)
-
-            self.Ph_ObsQ[ActualPoint, index] *= (1 - self.chi)
-            self.Ph_ObsQ[ActualPoint, index] += self.chi
-            self.Ph_TimeQ[ActualPoint, index] *= (1 - self.chi)
-            self.Ph_TimeQ[ActualPoint, index] += self.chi
 
             ActualPoint = index
             ActualPeriod = NewPeriod
@@ -361,6 +341,11 @@ class ACOSchedule(object):
 
         return [np.array(Path, dtype=int), ObsQ, TimeQ]
 
+    def Update_BPS2(self, path, ObsQ, TimeQ):
+        # Update the list of Pareto eficient paths, with path and it's objective values ObsQ and TimeQ (only if it is non dominated).
+        self.BPS.append([path, ObsQ, TimeQ])
+        return
+
     def Update_BPS(self, path, ObsQ, TimeQ):
         # Update the list of Pareto eficient paths, with path and it's objective values ObsQ and TimeQ (only if it is non dominated).
         if len(self.BPS) == 0:
@@ -381,6 +366,11 @@ class ACOSchedule(object):
                 self.ParetoHistorial.append([ObsQ, TimeQ, self.IterationNumber])
                 print 'new non dominated solution', datetime.datetime.now(), 'Obs = ', ObsQ, 'Time = ',TimeQ
             self.BPS = BPS_Aux
+        return
+
+    def Update_iterationBPS2(self, path, ObsQ, TimeQ):
+        # Update the list of Pareto eficient paths, with path and it's objective values ObsQ and TimeQ (only if it is non dominated).
+        self.iterationBPS.append([path, ObsQ, TimeQ])
         return
 
     def Update_iterationBPS(self, path, ObsQ, TimeQ):
@@ -408,33 +398,33 @@ class ACOSchedule(object):
         return
 
     def Update_Pheromone(self):
-        for j in range(len(self.BPS)):
-            addObsQ = 10*self.BPS[j][1] / self.NormObsQ
-            addTimeQ = 10*self.BPS[j][2] / self.NormTimeQ
-            path = self.BPS[j][0]
-            for i in range(np.size(path, 0) - 1):
-                self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
-                # self.Ph_ObsQ[path[i,0],path[i+1,0]]+=self.rho*addObsQ
-                self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] += addObsQ
-                self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
-                # self.Ph_TimeQ[path[i,0],path[i+1,0]]+=self.rho*addTimeQ
-                self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] += addTimeQ
+        # for j in range(len(self.BPS)):
+        #     addObsQ = 10*self.BPS[j][1] / self.NormObsQ
+        #     addTimeQ = 10*self.BPS[j][2] / self.NormTimeQ
+        #     path = self.BPS[j][0]
+        #     for i in range(np.size(path, 0) - 1):
+        #         self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
+        #         # self.Ph_ObsQ[path[i,0],path[i+1,0]]+=self.rho*addObsQ
+        #         self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] += addObsQ
+        #         self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
+        #         # self.Ph_TimeQ[path[i,0],path[i+1,0]]+=self.rho*addTimeQ
+        #         self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] += addTimeQ
         return
 
     def Update_Pheromone_Iteration(self):
-        for j in range(len(self.iterationBPS)):
-            addObsQ = 10*self.iterationBPS[j][1] / self.NormObsQ
-            addTimeQ = 10*self.iterationBPS[j][2] / self.NormTimeQ
-            path = self.iterationBPS[j][0]
-            self.Ph_ObsQBeg[path[0]] *= (1 - self.rho)
-            self.Ph_ObsQBeg[path[0]] += addObsQ
-            self.Ph_TimeQBeg[path[0]] *= (1 - self.rho)
-            self.Ph_TimeQBeg[path[0]] += addTimeQ
-            for i in range(np.size(path, 0) - 1):
-                self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
-                self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] += addObsQ
-                self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
-                self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] += addTimeQ
+        # for j in range(len(self.iterationBPS)):
+        #     addObsQ = 10*self.iterationBPS[j][1] / self.NormObsQ
+        #     addTimeQ = 10*self.iterationBPS[j][2] / self.NormTimeQ
+        #     path = self.iterationBPS[j][0]
+        #     self.Ph_ObsQBeg[path[0]] *= (1 - self.rho)
+        #     self.Ph_ObsQBeg[path[0]] += addObsQ
+        #     self.Ph_TimeQBeg[path[0]] *= (1 - self.rho)
+        #     self.Ph_TimeQBeg[path[0]] += addTimeQ
+        #     for i in range(np.size(path, 0) - 1):
+        #         self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
+        #         self.Ph_ObsQ[path[i, 0], path[i + 1, 0]] += addObsQ
+        #         self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] *= (1 - self.rho)
+        #         self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] += addTimeQ
         return
 
     def ObjectiveValues(self, SCH):

@@ -1,15 +1,15 @@
 import matplotlib.pyplot as plt
 from matplotlib import animation
 
-#import healpy as hpy
+import healpy as hpy
 import numpy as np
 
 
-def animation_path(sched,rot,title):
+def animation_path(sched,rot,title,*args, **kwargs):
     vid_title = "videos/"+title + ".mp4"
     hpy.mollview(title=title,rot=rot)
     hpy.graticule(verbose=0)
-    points = hpy.projscatter(np.pi/2-sched[:,1],sched[:,0],lonlat=False,c=np.arange(np.size(sched,0)))
+    points = hpy.projscatter(np.pi/2-sched[:,1],sched[:,0],lonlat=False,c=np.arange(np.size(sched,0)),*args, **kwargs)
     offto = points.get_offsets()
     arrayto = points.get_array()
     climto = points.get_clim()
@@ -18,7 +18,7 @@ def animation_path(sched,rot,title):
     plt.clf()
     hpy.mollview(title=title,rot=rot)
     hpy.graticule(verbose=0)
-    points = hpy.projscatter([],[],lonlat=False)
+    points = hpy.projscatter([],[],lonlat=False,*args, **kwargs)
     fig = points.get_figure()
     points.set_clim(climto)
     points.set_cmap(cmapto)
@@ -30,4 +30,4 @@ def animation_path(sched,rot,title):
 
     anim = animation.FuncAnimation(fig, animate,fargs=(offto,arrayto),frames=np.size(offto,0), interval=20, blit=True)
     anim.save(vid_title)
-    plt.show()
+    # plt.show()
