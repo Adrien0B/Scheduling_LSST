@@ -1,13 +1,16 @@
-import ephem
-import numpy as np
-import numpy.random as npr
-import healpy as hpy
 import datetime
 import matplotlib.pyplot as plt
 import pickle
+
+import ephem
+import healpy as hpy
+import numpy as np
+import numpy.random as npr
+
+from functions import Time_dist
 from functions import conversion
+from functions import deconversion
 from functions import factibles
-from functions import Time_dist 
 
 
 class ACOSchedule(object):
@@ -20,13 +23,13 @@ class ACOSchedule(object):
 		self.NightDisc=ND 	#Number of intervals for discretization of the night.
 
 		# ACS parameters---------
-		self.q_0=0.9		#Parameter for step choosing in ACS
+		self.q_0=0.2		#Parameter for step choosing in ACS
 		self.chi=0.1		#Parameter for pheromone wasting in ACS
 		self.beta=2		#Parameter of ACS
-		self.rho=1		#Parameter for pheromone updating in ACS
+		self.rho=0.1		#Parameter for pheromone updating in ACS
 		self.NormObsQ=1	
 		self.NormTimeQ=1
-		self.m=10		#Number of ants per iteration.
+		self.m=60		#Number of ants per iteration.
 		#------------------------
 
 		#Compute Night parameters
@@ -57,7 +60,7 @@ class ACOSchedule(object):
 		print self.ObservationTime
 
 		#Best (in Pareto's sense) solutions
-		self.BPS= []	
+		self.BPS= []
 			#This list stores the solutions. The solutions are also lists with the form [path,ObsQ,TimeQ].
 		#---------------------------------
 
@@ -91,10 +94,16 @@ class ACOSchedule(object):
 
 	def Colony(self,m,Lambda):
 		#Runs an iteration of the ACS algorithm. m is the number of Ants and Lambda is for choosing the matrix of pheromones.
+		self.iterationBPS = []
 		for j in range(m):
+			Lambda = j / (self.m - 1)
 			[Path,ObsQ,TimeQ]=self.Ants(Lambda)
-			self.Update_BPS(Path,ObsQ,TimeQ)
-		self.Update_Pheromone()
+			self.Update_iterationBPS(Path,ObsQ,TimeQ)
+
+		for j in range(len(self.iterationBPS)):
+			B_aux = self.iterationBPS[j]
+			self.Update_BPS(B_aux[0],B_aux[1],B_aux[2])
+		self.Update_Pheromone_Iteration()
 		return
 
 
@@ -108,14 +117,18 @@ class ACOSchedule(object):
 		Path.append([Fact0no0[npr.randint(0,Fact0no0.size)],0])
 		ActualPoint=Path[0][0]
 		ActualPeriod=0
-		PhRowAux=np.zeros(np.size(self.X,0))
+		#PhRowAux=np.zeros(np.size(self.X,0))
 
 
 		while TotalT<=self.NightLength:
 			U=npr.rand()
 			#eta=np.power(((np.power(2,self.T[ActualPeriod])+128)/192.)/((self.Dist[ActualPeriod][ActualPoint,:]+0.0001)+(self.ZenAn[ActualPeriod]+np.pi)/(3*np.pi/2)),1)
 			eta=np.power(((np.power(2,self.T[ActualPeriod])+128)/192.)/(self.Dist[ActualPeriod][ActualPoint,:]+0.0001),self.beta)
-			
+			#eta = 1./self.Dist[ActualPeriod][ActualPoint,:]
+			#eta = np.divide(self.ZenAn[ActualPeriod],self.Dist[ActualPeriod][ActualPoint,:])
+			#eta = self.T/(self.Dist[ActualPeriod][ActualPoint,:]*self.ZenAn[ActualPeriod])
+			#eta = np.ones(np.size(self.Dist[ActualPeriod][ActualPoint,:]))
+
 			if U<=Lambda:
 				index=self.ChooseStep(self.Ph_ObsQ[ActualPeriod][ActualPoint,:]*self.Fact[ActualPeriod]*NotVisited*eta)
 
@@ -212,7 +225,29 @@ class ACOSchedule(object):
 				print 'new non dominated solution',datetime.datetime.now()
 			self.BPS=BPS_Aux
 		return
-
+	
+	def Update_iterationBPS(self,path,ObsQ,TimeQ):
+		#Update the list of Pareto eficient paths, with path and it's objective values ObsQ and TimeQ (only if it is non dominated).
+		if len(self.iterationBPS)==0:
+			self.iterationBPS.append([path,ObsQ,TimeQ])
+			self.NormObsQ=ObsQ
+			self.NormTimeQ=TimeQ
+		else:
+			BPS_Aux=[]
+			flag_pareto=1
+			while 0<len(self.iterationBPS):
+				A=self.iterationBPS.pop()
+				if (((ObsQ>A[1])*(TimeQ>=A[2]))+((ObsQ>=A[1])*(TimeQ>A[2])))==0:
+					BPS_Aux.append(A)
+					if (ObsQ<=A[1])*(TimeQ<=A[2]):
+						flag_pareto=0
+			if flag_pareto:
+				BPS_Aux.append([path,ObsQ,TimeQ])
+				self.ParetoHistorial.append([ObsQ,TimeQ,self.IterationNumber])
+				print 'new non dominated solution',datetime.datetime.now()
+			self.iterationBPS=BPS_Aux
+		return	
+	
 	def Update_Pheromone(self):
 		for j in range(len(self.BPS)):
 			addObsQ=self.BPS[j][1]/self.NormObsQ
@@ -220,10 +255,24 @@ class ACOSchedule(object):
 			path=self.BPS[j][0]
 			for i in range(np.size(path,0)-1):
 				self.Ph_ObsQ[path[i,1]][path[i,0],path[i+1,0]]*=(1-self.rho)
-				self.Ph_ObsQ[path[i,1]][path[i,0],path[i+1,0]]+=self.rho*addObsQ
+				#self.Ph_ObsQ[path[i,1]][path[i,0],path[i+1,0]]+=self.rho*addObsQ
+				self.Ph_ObsQ[path[i,1]][path[i,0],path[i+1,0]]+=addObsQ
 				self.Ph_TimeQ[path[i,1]][path[i,0],path[i+1,0]]*=(1-self.rho)
-				self.Ph_TimeQ[path[i,1]][path[i,0],path[i+1,0]]+=self.rho*addTimeQ
+				#self.Ph_TimeQ[path[i,1]][path[i,0],path[i+1,0]]+=self.rho*addTimeQ
+				self.Ph_TimeQ[path[i,1]][path[i,0],path[i+1,0]]+=addTimeQ
 		return
+	
+	def Update_Pheromone_Iteration(self):
+		for j in range(len(self.iterationBPS)):
+			addObsQ=self.iterationBPS[j][1]/self.NormObsQ
+			addTimeQ=self.iterationBPS[j][2]/self.NormTimeQ
+			path=self.iterationBPS[j][0]
+			for i in range(np.size(path,0)-1):
+				self.Ph_ObsQ[path[i,1]][path[i,0],path[i+1,0]]*=(1-self.rho)
+				self.Ph_ObsQ[path[i,1]][path[i,0],path[i+1,0]]+=addObsQ
+				self.Ph_TimeQ[path[i,1]][path[i,0],path[i+1,0]]*=(1-self.rho)
+				self.Ph_TimeQ[path[i,1]][path[i,0],path[i+1,0]]+=addTimeQ
+		return	
 
 
 	def ObjectiveValues(self,SCH):
@@ -283,10 +332,9 @@ class ACOSchedule(object):
 		self.Ph_TimeQ=M
 		return
 	def init_Pheromone(self):
-		NX=np.size(self.X,0)
 		P=[]
 		for i in range(self.NightDisc):
-			P.append(np.ones((NX,NX)))
+			P.append(np.ones((self.NX,self.NX)))
 		return P
 
 	def TimeFunc(self,t):
@@ -306,10 +354,24 @@ class ACOSchedule(object):
 	def AZALT(self,Path):
 		#Calculates the (AZ,ALT) coordinates for the points of a Path at the times at which they are visited.
 		AA=[]
+		DR=[]
 		for i in range(np.size(Path,0)):
 			aa=[self.AzAn[Path[i,1]][Path[i,0]],np.pi/2-self.ZenAn[Path[i,1]][Path[i,0]]]
 			AA.append(aa)
-		return AA
+
+			self.obs.date = self.NightBeg + (Path[i,1] + 0.5) * self.Interval
+			dr = deconversion(self.obs.lat,aa[0],aa[1],self.obs.sidereal_time())
+			DR.append(dr)
+		return [AA,DR]
+
+	def MoonPosition(self):
+		MAA = []
+		moon = ephem.Moon()
+		for i in range(self.NightDisc):
+			self.obs.date = self.NightBeg + (i + 0.5) * self.Interval
+			moon.compute(self.obs)
+			MAA.append([moon.ra,moon.dec])
+		return np.array(MAA)
 
 	def PlotParetoHistorial(self):
 		#Plots the objective values of the non dominated solutions found during the whole process, even if they were eliminated.
@@ -317,6 +379,16 @@ class ACOSchedule(object):
 		PHist=np.array(self.ParetoHistorial)
 		plt.scatter(PHist[:,0],PHist[:,1],c=np.arange(np.size(PHist,0)),alpha=0.7,s=100)
 		plt.show()
+	
+	def PlotParetoFront(self):
+		#Plots the the non dominated solutions found in the end
+		PFX = [self.BPS[i][1] for i in range(len(self.BPS))]
+		PFY = [self.BPS[i][2] for i in range(len(self.BPS))]
+		plt.scatter(PFX,PFY)
+		plt.show()	
+
+
+
 
 
 
@@ -326,7 +398,7 @@ class ACOSchedule(object):
 obs=ephem.Observer()
 obs.lat="-33:27:00"
 obs.lon="-70:40:00"
-obs.date="2015/03/12 23:00:00"
+obs.date="2017/03/12 23:00:00"
 #-------------------
 
 
@@ -345,15 +417,18 @@ Num=np.size(X,0)
 
 #Times since last visit
 #T = npr.randint(6, size=Num)+1
-T=np.load('Times.npy')		#This only works for Nside=16.
+if Nside == 32:
+	T=np.load('Times32.npy')
+else:
+	T=np.load('Times.npy')
 #-------------------------
 
 
 ACO=ACOSchedule(X,obs,10,T)
-ACO.RunACO_Pheromone(10,1000)
+ACO.RunACO_Pheromone(0,100)
 print len(ACO.BPS)
 
-schedAA=ACO.AZALT(ACO.BPS[0][0])
+[schedAA,schedDR]=ACO.AZALT(ACO.BPS[0][0])
 SS=np.size(schedAA,0)
 
 colores=np.linspace(1,SS-1,SS-1)/SS
@@ -361,6 +436,7 @@ np.save('schedAA',schedAA)
 np.save('colores',colores)
 np.save('ParetoHistorial',np.array(ACO.ParetoHistorial))
 ACO.PlotParetoHistorial()
+ACO.PlotParetoFront()
 
 with open('BPS','wb') as f:
 	pickle.dump(ACO.BPS,f)

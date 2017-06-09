@@ -10,13 +10,14 @@ from matplotlib.transforms import Affine2D, BboxTransformTo, Transform
 from matplotlib.projections import register_projection
 import matplotlib.spines as mspines
 import matplotlib.axis as maxis
+from transformation import transform
 
 import ephem
 import numpy as np
 import numpy.random as npr
 #from ranking import ranking
 
-def conversion(lat,dec,ar,LST):
+def conversion2(lat,dec,ar,LST):
 	"Computes [Azimuth,Altitude]. It can recieve  vectors."
 	pi = np.pi
 	deg2rad = pi / 180.
@@ -26,7 +27,7 @@ def conversion(lat,dec,ar,LST):
 	sinz = np.sqrt(1 - cosz**2)
 	z = np.arccos(cosz)
 	ALT=pi/2-z
-	   
+
 	cosAZ = (np.sin(dec) - cosz * np.sin(lat)) / (sinz * np.cos(lat))
 	AZ =np.array( np.arccos(cosAZ))
 	for i in range(AZ.size):
@@ -36,22 +37,91 @@ def conversion(lat,dec,ar,LST):
 			break
 		if (ha[i] <= pi) :
 			AZ[i] = -AZ[i]
-			  
+
 	return np.array([AZ,ALT])
 
+def conversion4(lat, dec, ra, LST):
+    "Computes [Azimuth,Altitude]. It can recieve  vectors."
+    H = LST-ra
+
+    tanAzix = np.cos(lat)*np.sin(dec)-np.sin(lat)*np.cos(dec)*np.cos(H)
+    tanAziy = np.cos(dec)*np.sin(H)
+
+    AZ = -np.arctan2(tanAziy,tanAzix)
+
+    sinh = np.sin(lat)*np.sin(dec)+np.cos(lat)*np.cos(dec)*np.cos(H)
+
+    ALT = np.arcsin(sinh)
+
+    return np.array([AZ, ALT])
+
+def conversion5(obs, dec, ra):
+    """
+    AZALT=np.array(map(lambda x,y : transform((x,y),'equatorial','horizon',obs),np.array(ra),np.array(dec)))
+    AZ = AZALT[:,0]
+    ALT = AZALT[:,1]
+    return np.array([AZ,ALT])
+    """
+    try:
+        AZ = []
+        ALT = []
+        for i in range(len(dec)):
+            a = transform((ra[i],dec[i]),'equatorial','horizon',obs)
+            AZ.append(a[0])
+            ALT.append(a[1])
+        return np.array([AZ,ALT])
+    except:
+        a = transform((ra, dec), 'equatorial', 'horizon', obs)
+        return np.array([a[0],a[1]])
+
+def deconversion4(obs, az, h):
+    try:
+        RA = []
+        DEC = []
+        for i in range(len(az)):
+            a = obs.radec_of(az[i], h[i])
+            RA.append(a[0])
+            DEC.append(a[1])
+
+        return np.array([RA, DEC])
+    except:
+        a = obs.radec_of(az, h)
+        return np.array([a[0], a[1]])
+
+def deconversion5(obs, az, h):
+    try:
+        RA = []
+        DEC = []
+        for i in range(len(az)):
+            a = transform((az[i],h[i]),'horizon','equatorial',obs)
+            RA.append(a[0])
+            DEC.append(a[1])
+        return np.array([RA, DEC])
+    except:
+        a = transform((az, h), 'horizon', 'equatorial', obs)
+        return np.array([a[0],a[1]])
+
+def conversion(obs, dec, ra):
+    #return conversion2(obs.lat,dec,ra,obs.sidereal_time())
+    return conversion4(obs.lat,dec,ra,obs.sidereal_time())
+    #return conversion5(obs,dec,ra)
+
+def deconversion(obs,az,h):
+    #return deconversion4(obs,az,h)
+    return deconversion5(obs,az,h)
 
 def factibles( X,obs,actual ):
 	"Returns factible points from a list X=[DEC,RA] for the observer. It considers angle distance from the moon and the angle above the horizon."
 	# Parameters
-	dist_moon=45*np.pi/180
-	above_horizon=45*np.pi/180
+	dist_moon=40*np.pi/180
+	above_horizon=40*np.pi/180
 
 	#Initialize Moon instance
 	moon=ephem.Moon()
 	moon.compute(obs)
 
 	#Compute [AZ,ALT]
-	X_obs=np.transpose(np.array(conversion(obs.lat,X[:,0],X[:,1],float(obs.sidereal_time())))) #[AZ,ALT] of X for the observer.
+	X_obs=np.transpose(np.array(conversion(obs,X[:,0],X[:,1]))) #[AZ,ALT] of X for the observer.
 
 	#One if factible, zero if not
 	I=np.ones(np.size(X,0)) #Idicates if factible or not.	
@@ -62,14 +132,16 @@ def factibles( X,obs,actual ):
 
 
 	return I
+
 def Time_dist(X,observer,actual):
 	az_vel=10./(24*3600)
 	alt_vel=10./(24*3600)
-	X_obs=np.transpose(np.array(conversion(observer.lat,X[:,0],X[:,1],float(observer.sidereal_time())))) #[AZ,ALT] of X for the observer.
-	actual_AA=np.transpose(np.array(conversion(observer.lat,actual[0],actual[1],float(observer.sidereal_time())))) #[AZ,ALT] of actual point.
+	X_obs=np.transpose(np.array(conversion(observer,X[:,0],X[:,1]))) #[AZ,ALT] of X for the observer.
+	actual_AA=np.transpose(np.array(conversion(observer,actual[0],actual[1]))) #[AZ,ALT] of actual point.
 	diference=np.abs(X_obs - np.ones((np.size(X,0),1))*actual_AA)
 	diference[:,0]=np.min((diference[:,0],2*np.pi-diference[:,0]),0)
 	return np.maximum(az_vel*diference[:,0],alt_vel*diference[:,1])
+
 def Factible_Schedule(X,observer,T):
 	observation_time=30
 	Init_time=observer.date
@@ -108,7 +180,7 @@ def Factible_Schedule(X,observer,T):
 
 		j=np.argmax(Valor)
 		Sched[i,:]=X[Fact[j],:]
-		[SchedAZALT[i,0],SchedAZALT[i,1]]=conversion(observer.lat, Sched[i,0], Sched[i,1], observer.sidereal_time())
+		[SchedAZALT[i,0],SchedAZALT[i,1]]=conversion(observer, Sched[i,0], Sched[i,1])
 		Rank2[Fact[j]]=np.size(X,0)+i
 		desplacement_time=Dist[j]
 		T[Fact[j]]=0
@@ -137,7 +209,7 @@ def ranking(X, obs, N, T ,vel):
     #calcular el �ngulo cenital de cada punto en X.
     dec = X[:,0]
     ra = X[:,1]
-    [az, alt] = conversion(lat, dec, ra, LST)
+    [az, alt] = conversion(obs, dec, ra)
     zen1 = np.pi/2 - alt #�ngulo cenital
 
 #Using lists zen, find Ranking 1. We want the largest values, penalizing great slew time:
