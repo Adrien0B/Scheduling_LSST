@@ -1,9 +1,12 @@
 import datetime
 import matplotlib.pyplot as plt
+import multiprocessing as mp
 
 import ephem
 import numpy as np
 import numpy.random as npr
+import random as rd
+import os
 
 from functions import Time_dist
 from functions import conversion
@@ -12,13 +15,16 @@ from functions import factibles
 
 
 class ACOSchedule(object):
-    def __init__(self, X, observer, ND, T):
+    def __init__(self):
+        return
+
+    def initialise(self, X, observer,start_date,end_date, ND, T):
         # This is the inicialization function. It recieves an array X of points in (DEC,RA) coordinates (a two column numpy array),
         # an observer instance of the ephem library, the number of intervals ND for the discretization of the night, and the times
         # since the last visit in the array T with same length as X.
 
         print datetime.datetime.now()
-        self.NightDisc = ND  # Number of intervals for discretization of the night.
+        # self.NightDisc = ND  # Number of intervals for discretization of the night.
 
         # ACS parameters---------
         self.q_0 = 0.2  # Parameter for step choosing in ACS
@@ -30,16 +36,21 @@ class ACOSchedule(object):
         # ------------------------
 
         # Compute Night parameters
+        self.ND = ND
         self.obs = observer  # Observer instance of pyephem.
-        sun = ephem.Sun()
-        sun.compute(observer)
-        self.NightEnd = observer.next_rising(sun)
-        observer.date = self.NightEnd
-        sun.compute(observer)
-        self.NightBeg = observer.previous_setting(sun)
-        observer.date = self.NightBeg
-        self.NightLength = self.NightEnd - self.NightBeg
-        self.Interval = self.NightLength / ND
+        # sun = ephem.Sun()
+        # sun.compute(observer)
+        # self.NightEnd = observer.next_rising(sun)
+        # observer.date = self.NightEnd
+        # sun.compute(observer)
+        # self.NightBeg = observer.previous_setting(sun)
+        # observer.date = self.NightBeg
+        # self.NightLength = self.NightEnd - self.NightBeg
+        # self.Interval = self.NightLength / ND
+        self.start_date = start_date
+        self.end_date = end_date
+        self.Times = self.CreateTimes(start_date,end_date)
+        self.NightLength = sum(self.Times[:,1])
         print self.NightLength
         # ----------------------
 
@@ -50,11 +61,11 @@ class ACOSchedule(object):
         self.X = self.X[self.TotalFact,:]
         self.Fact = self.DiscreteFactibles()
         self.X_obs = []
-        for i in range(self.NightDisc):
-            self.obs.date = self.NightBeg + (i + 0.5) * self.Interval
+        for time in self.Times[:,0]:
+            self.obs.date = time
             self.X_obs.append(np.transpose(np.array(conversion(self.obs, self.X[:, 0], self.X[:, 1]))))  # [AZ,ALT] of X for the observer.
         self.NX = np.size(self.X, 0)
-        self.T = T[self.TotalFact]  # Time since last visit for X.
+        self.T = np.array(T[self.TotalFact],dtype = float)  # Time since last visit for X.
         #self.T = T # Time since last visit for X.
         self.Ph_ObsQ = self.init_Pheromone()  # Pheromone for quality of the observations (little zenith angle).
         self.Ph_TimeQ = self.init_Pheromone()  # Pheromone for correct distance in time between obs of the same point.
@@ -65,7 +76,7 @@ class ACOSchedule(object):
         self.AzAn = [i[:, 0] for i in self.X_obs]
         #self.ZenAn = self.DiscreteZenithAngle()
         #self.AzAn = self.DiscreteAzimuth()
-        [self.Times,self.MAA] = self.MoonPosition()
+        self.MAA = self.MoonPosition()
         self.Epsilon = 0.5
         if np.size(X,0) == 3072:
             self.ObservationTime = 4*30. / (24 * 3600)
@@ -81,7 +92,64 @@ class ACOSchedule(object):
         # ---------------------------------
 
         self.IterationNumber = -1
+        self.AntIterations = 0
+        self.ChangedIterations = []
         self.ParetoHistorial = []
+
+        print('Construccion Completa\n')
+        print datetime.datetime.now()
+
+    def initialise_from_file(self,title):
+        # Copy all data from a previous run
+        ACO = np.load(title)[0]
+        print datetime.datetime.now()
+
+        # ACS parameters---------
+        self.q_0 = ACO.q_0  # Parameter for step choosing in ACS
+        self.chi = ACO.chi  # Parameter for pheromone wasting in ACS
+        self.rho = ACO.rho  # Parameter for pheromone updating in ACS
+        self.NormObsQ = ACO.NormObsQ
+        self.NormTimeQ = ACO.NormTimeQ
+        self.m = ACO.m  # Number of ants per iteration.
+        # ------------------------
+
+        #Night parameters
+        self.ND = ACO.ND
+        self.obs = ACO.obs  # Observer instance of pyephem.
+        self.start_date = ACO.start_date
+        self.end_date = ACO.end_date
+        self.Times = ACO.Times
+        self.NightLength = ACO.NightLength
+        print self.NightLength
+        # ----------------------
+
+        self.X = ACO.X  # DEC-RA of discretization of the sky.
+        self.Fact = ACO.Fact
+        self.TotalFact = ACO.TotalFact
+        self.X_obs = ACO.X_obs
+        self.NX = ACO.NX
+        self.T = ACO.T  # Time since last visit for X.
+        self.Ph_ObsQ = ACO.Ph_ObsQ  # Pheromone for quality of the observations (little zenith angle).
+        self.Ph_TimeQ = ACO.Ph_TimeQ  # Pheromone for correct distance in time between obs of the same point.
+        self.Ph_ObsQBeg = ACO.Ph_ObsQBeg
+        self.Ph_TimeQBeg = ACO.Ph_TimeQBeg
+        self.Dist = ACO.Dist  # Distances between points
+        self.ZenAn = ACO.ZenAn
+        self.AzAn = ACO.AzAn
+        self.MAA = ACO.MAA
+        self.Epsilon = ACO.Epsilon
+        self.ObservationTime = ACO.ObservationTime
+        print self.ObservationTime
+
+        # Best (in Pareto's sense) solutions
+        self.BPS = ACO.BPS
+        # This list stores the solutions. The solutions are also lists with the form [path,ObsQ,TimeQ].
+        # ---------------------------------
+
+        self.IterationNumber = ACO.IterationNumber
+        self.AntIterations = ACO.AntIterations
+        self.ChangedIterations = list(ACO.ChangedIterations)
+        self.ParetoHistorial = ACO.ParetoHistorial
 
         print('Construccion Completa\n')
         print datetime.datetime.now()
@@ -100,104 +168,54 @@ class ACOSchedule(object):
         self.Update_Pheromone()
 
         print '*****************Ants******************'
-        self.AntIterations = AntIterations
         for j in range(AntIterations):
-            print j, len(self.BPS), datetime.datetime.now()
-            self.IterationNumber = j
+            print j+self.AntIterations, len(self.BPS), datetime.datetime.now()
+            self.IterationNumber = j+self.AntIterations
             self.Colony(self.m)
+        self.AntIterations = self.AntIterations + AntIterations
         return
 
     def Colony(self, m):
         # Runs an iteration of the ACS algorithm. m is the number of Ants and Lambda is for choosing the matrix of pheromones.
-        """Sum = np.cumsum(self.Ph_ObsQ[0][1400, :] * self.Fact[0])
-        eta = 1./(self.Dist[0][1400,:]+np.min(filter(lambda x:x>0,self.Dist[0][1400,:]))/10.)
-        #print Sum[-1]
-        maxS = Sum[-1]
-        maxeta = np.max(eta)
-        mineta = np.min(eta)
-        for i in range(1450,1470):
-            eta = 1./(self.Dist[0][i,:]+np.min(filter(lambda x:x>0,self.Dist[0][i,:]))/10.)
-            Ceta = np.cumsum(eta)
-            Ceta2 = np.cumsum(eta*self.Fact[0])
-            S = np.cumsum(self.Ph_ObsQ[0][i, :] * self.Fact[0])
-            Seta = np.cumsum(self.Ph_ObsQ[0][i, :] * self.Fact[0] * np.power(eta,self.beta))
-            maxS = max(S[-1],maxS)
-            maxeta = max(maxeta,np.max(eta))
-            mineta = min(mineta,np,min(eta))
-            plt.figure(1)
-            plt.plot(S/S[-1])
-            plt.figure(2)
-            plt.plot(Ceta2/Ceta2[-1])
-            plt.figure(3)
-            plt.plot(Seta/Seta[-1])
-            plt.figure(4)
-            plt.plot(Ceta2*S/(Ceta2[-1]*S[-1]))
-        print maxS
-        print mineta,maxeta
-        plt.show()"""
 
-        """etaZ1 = 1. / self.ZenAn[0]
-        etaZ1 = etaZ1 * self.Fact[0]
-        etaZ1 = etaZ1 / sum(etaZ1)  # print Sum[-1]
-        etaZ2 = 3 * np.pi / (2 * (self.ZenAn[0] + np.pi))
-        etaZ2 = etaZ2 * self.Fact[0]
-        etaZ2 = etaZ2 / sum(etaZ2)
-        plt.figure(1)
-        plt.plot(np.cumsum(etaZ1))
-        plt.figure(2)
-        plt.plot(np.cumsum(etaZ2))
-        plt.show()"""
 
-        """etaT1 = self.T
-        etaT1 = etaT1 * self.Fact[0]
-        etaT1 = 1.0 * etaT1 / sum(etaT1)
-        etaT2 = np.power(2,self.T)
-        etaT2 = etaT2 * self.Fact[0]
-        etaT2 = 1.0 * etaT2 / sum(etaT2)
-        etaT3 = (np.power(2,self.T)+128.)/192.0
-        etaT3 = etaT3 * self.Fact[0]
-        etaT3 = 1.0 * etaT3 / sum(etaT3)
-        plt.figure(1)
-        plt.plot(np.cumsum(etaT1))
-        plt.figure(2)
-        plt.plot(np.cumsum(etaT2))
-        plt.figure(3)
-        plt.plot(np.cumsum(etaT3))
-        plt.show()"""
+        # """Show heuristic cumulative probabilities"""
+        # fig = plt.figure()
+        # for i in range(100):
+        #     etaD = 1. / (self.Dist[0][i, :] + np.min(
+        #         filter(lambda x: x > 0, self.Dist[0][i, :])) / 10.)
+        #     etaD = etaD * self.Fact[0]
+        #     etaD = etaD / np.sum(etaD)
+        #
+        #     etaZ = 1. / self.ZenAn[0]
+        #     # etaZ = 3*np.pi/(2*(self.ZenAn[ActualPeriod]+np.pi))
+        #     etaZ = etaZ * self.Fact[0]
+        #     etaZ = etaZ / sum(etaZ)
+        #
+        #     # etaT = self.T
+        #     etaT = np.power(2, self.T) - 1.0
+        #     # etaT = (np.power(2,self.T)+128.)/192.
+        #     etaT = 1.0 * etaT * self.Fact[0]
+        #     etaT = etaT / sum(etaT)
+        #
+        #     eta = np.power(etaD, 2) * np.power(etaZ, 2) * np.power(etaT, 0)
+        #     eta = eta / np.sum(eta)
+        #     # eta_sum = np.cumsum(eta)/sum(eta)
+        #
+        #     tau = self.Ph_ObsQ[i, :] * self.Fact[0]
+        #     tau = tau / np.sum(tau)
+        #
+        #     prob = eta*tau
+        #     prob_sum = np.cumsum(prob) / sum(prob)
+        #     plt.plot(prob_sum)
+        # # plt.show()
+        # fig.savefig("videos/Probability/Probability_{:0>5}".format(self.IterationNumber))
+        # plt.close()
+        # plt.clf()
 
-        """F = np.transpose(np.ones(np.size(self.X,0)).reshape(np.size(self.X,0),1)*self.Fact[0])
-
-        A = np.zeros((np.size(self.X,0),np.size(self.X,0)))
-        minA = []
-        maxA = []
-        for i in range(self.NightDisc):
-            F = np.transpose(np.ones(np.size(self.X, 0)).reshape(np.size(self.X, 0), 1) * self.Fact[i])
-            Ft = np.transpose(F)
-            A += Ft*self.Ph_ObsQ[i]*F
-            minA.append(np.min(self.Ph_ObsQ[i]))
-            maxA.append(np.max(self.Ph_ObsQ[i]))
-        plt.matshow(A)
-        plt.show()
-        #print minA
-        #print maxA
-
-        A = np.zeros((np.size(self.X,0),np.size(self.X,0)))
-        minA = []
-        maxA = []
-        for i in range(self.NightDisc):
-            F = np.transpose(np.ones(np.size(self.X, 0)).reshape(np.size(self.X, 0), 1) * self.Fact[i])
-            Ft = np.transpose(F)
-            A += Ft*self.Ph_TimeQ[i]*F
-            minA.append(np.min(self.Ph_TimeQ[i]))
-            maxA.append(np.max(self.Ph_TimeQ[i]))
-        plt.matshow(A)
-        plt.show()
-        #print minA
-        #print maxA
-        """
-
-        # save_figure=1
-        # show_figure=0
+        # """Show and Save Pheromone matrices"""
+        # save_figure=0
+        # show_figure=1
         # plt.clf()
         # plt.matshow(self.Ph_ObsQ)
         # fig = plt.gcf()
@@ -218,14 +236,71 @@ class ACOSchedule(object):
 
 
         self.iterationBPS = []
-        for j in range(m):
-            Lambda = j / (self.m - 1)
-            [Path, ObsQ, TimeQ] = self.Ants(Lambda)
+
+        # for j in range(m):
+        #     # print "Ant " + str(j+1)
+        #     Lambda = j / (self.m - 1)
+        #     [Path, ObsQ, TimeQ] = self.Ants(Lambda)
+        #     # print ObsQ,TimeQ
+        #     self.Update_iterationBPS(Path, ObsQ, TimeQ)
+
+        # pool = mp.Pool(processes=8)
+        # results = [pool.apply(Ant_Multi, args=(self,j / (self.m - 1),)) for j in range(m)]
+        # for [Path, ObsQ, TimeQ] in results:
+        #     # print ObsQ,TimeQ
+        #     self.Update_iterationBPS(Path, ObsQ, TimeQ)
+        # pool.close()
+
+        # output = mp.Queue()
+        # processes = [mp.Process(target=Ant_Pool, args=(self, j / (self.m - 1.0), output)) for j in range(self.m)]
+        # for p in processes:
+        #     p.start()
+        # # print mp.active_children()
+        # results = []
+        # for p in processes:
+        #     # print output.qsize()
+        #     while (output.qsize() > 0):
+        #         results.append(output.get())
+        #     p.join()
+        #     # p.terminate()
+        # while (output.qsize() > 0):
+        #     results.append(output.get())
+        # # print mp.active_children()
+        # print len(results)
+        # # results = [output.get() for p in processes]
+        # # for p in processes:
+        # #     p.terminate()
+        # for [Path, ObsQ, TimeQ] in results:
+        #     # print ObsQ,TimeQ
+        #     self.Update_iterationBPS(Path, ObsQ, TimeQ)
+
+        Pipes = [mp.Pipe() for j in range(self.m)]
+        processes = [mp.Process(target=Ant_Pipe, args=(self, j / (self.m - 1.0), Pipes[j][1])) for j in range(self.m)]
+        for p in processes:
+            p.start()
+        # print mp.active_children()
+        results = []
+        j = 0
+        for p in processes:
+            results.append(Pipes[j][0].recv())
+            j += 1
+            p.join()
+            # p.terminate()
+        # print mp.active_children()
+        # print len(results)
+        # results = [output.get() for p in processes]
+        # for p in processes:
+        #     p.terminate()
+        for [Path, ObsQ, TimeQ] in results:
+            # print ObsQ,TimeQ
             self.Update_iterationBPS(Path, ObsQ, TimeQ)
 
         for j in range(len(self.iterationBPS)):
             B_aux = self.iterationBPS[j]
-            self.Update_BPS(B_aux[0], B_aux[1], B_aux[2])
+            Change = self.Update_BPS(B_aux[0], B_aux[1], B_aux[2])
+
+        if(Change):
+            self.ChangedIterations.append(self.IterationNumber)
 
         self.Update_Pheromone_Iteration()
         #print np.min(self.Ph_ObsQ),np.max(self.Ph_ObsQ),np.min(self.Ph_TimeQ),np.max(self.Ph_TimeQ)
@@ -235,94 +310,110 @@ class ACOSchedule(object):
         # This function runs one ant for the ACS algorithm.
 
         TotalT = 0
+        LocalT = 0
+        T_ant = np.copy(self.T)
         Path = []
-        #NotVisited = np.ones(np.size(self.Fact[0]))
-        NotVisited = np.ones(self.NX)
 
         U = npr.rand()
         if U <= Lambda:
             tau = self.Ph_ObsQBeg * self.Fact[0]
             tau = tau / np.sum(tau)
             index = self.ChooseStep(tau)
-
         else:
             tau = self.Ph_TimeQBeg * self.Fact[0]
             tau = tau / np.sum(tau)
             index = self.ChooseStep(tau)
+
         Path.append([index, 0])
         ActualPoint = index
         ActualPeriod = 0
-        NotVisited[ActualPoint]=0
-        # PhRowAux=np.zeros(np.size(self.X,0))
+        T_ant[index] = 0.0
+        TimeQ = 0.0
+        ObsQ = 0.0
 
+        flagOverNight = False
 
         while TotalT <= self.NightLength:
             U = npr.rand()
-            #eta=np.power(((np.power(2,self.T[ActualPeriod])+128)/192.)/((self.Dist[ActualPeriod][ActualPoint,:]+0.0001)+(self.ZenAn[ActualPeriod]+np.pi)/(3*np.pi/2)),1)
-            #eta = np.power(((np.power(2, self.T[ActualPeriod]) + 128) / 192.) / (self.Dist[ActualPeriod][ActualPoint, :] + 0.0001),self.beta)
-            #eta = 1./(self.Dist[ActualPeriod][ActualPoint,:]+np.min(filter(lambda x:x>0,self.Dist[ActualPeriod][ActualPoint,:]))/10.)
-            #eta = np.divide(self.ZenAn[ActualPeriod],self.Dist[ActualPeriod][ActualPoint,:])
-            #eta = self.T/(self.Dist[ActualPeriod][ActualPoint,:]*self.ZenAn[ActualPeriod])
-            #eta = np.ones(np.size(self.Dist[ActualPeriod][ActualPoint,:]))
 
             etaD = 1. / (self.Dist[ActualPeriod][ActualPoint, :] + np.min(
                 filter(lambda x: x > 0, self.Dist[ActualPeriod][ActualPoint, :])) / 10.)
-            etaD = etaD * self.Fact[ActualPeriod] * NotVisited
+            etaD = etaD * self.Fact[ActualPeriod]
             etaD = etaD / np.sum(etaD)
 
             etaZ = 1. / self.ZenAn[ActualPeriod]
             #etaZ = 3*np.pi/(2*(self.ZenAn[ActualPeriod]+np.pi))
-            etaZ = etaZ * self.Fact[ActualPeriod] * NotVisited
+            etaZ = etaZ * self.Fact[ActualPeriod]
             etaZ = etaZ / sum(etaZ)
 
-            #etaT = self.T
-            etaT = np.power(2,self.T)
-            #etaT = (np.power(2,self.T)+128.)/192.
-            etaT = 1.0 * etaT * self.Fact[ActualPeriod] * NotVisited
+            #etaT = T_ant
+            etaT = np.power(2,T_ant)-1.0
+            #etaT = (np.power(2,T_ant)+128.)/192.
+            etaT = 1.0 * etaT * self.Fact[ActualPeriod]
             etaT = etaT / sum(etaT)
 
             eta = np.power(etaD, 2) * np.power(etaZ, 2) * np.power(etaT, 1)
             #eta = etaD * etaZ * etaT
 
             if U <= Lambda:
-                tau = self.Ph_ObsQ[ActualPoint, :] * self.Fact[ActualPeriod] * NotVisited
+                tau = self.Ph_ObsQ[ActualPoint, :] * self.Fact[ActualPeriod]
                 tau = tau / np.sum(tau)
                 index = self.ChooseStep(tau * eta)
 
             else:
-                tau = self.Ph_TimeQ[ActualPoint, :] * self.Fact[ActualPeriod] * NotVisited
+                tau = self.Ph_TimeQ[ActualPoint, :] * self.Fact[ActualPeriod]
                 tau = tau / np.sum(tau)
                 index = self.ChooseStep(tau * eta)
 
             TotalT += self.Dist[ActualPeriod][ActualPoint, index] + self.ObservationTime
-            NewPeriod = min(int(np.floor(TotalT / self.Interval)), self.NightDisc - 1)
+            LocalT += self.Dist[ActualPeriod][ActualPoint, index] + self.ObservationTime
+            if(LocalT >= self.Times[ActualPeriod,1]):
+                LocalT -= self.Times[ActualPeriod,1]
+                NewPeriod = ActualPeriod+1
+                T_ant += self.Times[ActualPeriod,1]
+                if(NewPeriod%self.ND == 0):
+                    flagOverNight = True
+                if(NewPeriod >= len(self.Times)):
+                    break
+            else :
+                NewPeriod = ActualPeriod
 
-            self.Ph_ObsQ[ActualPoint, index] *= (1 - self.chi)
-            self.Ph_ObsQ[ActualPoint, index] += self.chi
-            self.Ph_TimeQ[ActualPoint, index] *= (1 - self.chi)
-            self.Ph_TimeQ[ActualPoint, index] += self.chi
+            if(not(flagOverNight)):
+                ObsQ += np.pi / 2 - self.ZenAn[NewPeriod][index]
+                TimeQ += self.TimeFunc(T_ant[index])
+                T_ant[index] = 0.0
+                # self.Ph_ObsQ[ActualPoint, index] *= (1 - self.chi)
+                # self.Ph_ObsQ[ActualPoint, index] += self.chi
+                # self.Ph_TimeQ[ActualPoint, index] *= (1 - self.chi)
+                # self.Ph_TimeQ[ActualPoint, index] += self.chi
 
-            ActualPoint = index
-            ActualPeriod = NewPeriod
-            Path.append([ActualPoint, ActualPeriod])
-            NotVisited[ActualPoint] = 0
-            if sum(NotVisited) == 0:
-                print 'no more factible points'
-                break
+                ActualPoint = index
+                ActualPeriod = NewPeriod
+                Path.append([ActualPoint, ActualPeriod])
+            else:
+                flagOverNight = False
+                TotalT = sum(self.Times[0:NewPeriod,1])
+                LocalT = 0.0
+                ActualPeriod = NewPeriod
 
-        [ObsQ, TimeQ] = self.ObjectiveValues(np.array(Path, dtype=int))
+        # [ObsQ, TimeQ] = self.ObjectiveValues(np.array(Path, dtype=int))
 
         return [np.array(Path, dtype=int), ObsQ, TimeQ]
 
     def ChooseStep(self, values):
         # This function chooses the next step of an ant, using values as the probabilities p_ij.
-        U = npr.rand()
+        # plt.figure()
+        # plt.plot(np.cumsum(values)/sum(values))
+        # plt.show()
+        # U = npr.rand()
+        U = rd.random()
         if U <= self.q_0:
             index = np.argmax(values)
         else:
             SumValues = np.cumsum(values)
             Sum = SumValues[-1]
-            U2 = npr.rand() * Sum
+            # U2 = npr.rand() * Sum
+            U2 = rd.random() * Sum
             index = np.searchsorted(SumValues, U2)
         return index
 
@@ -363,9 +454,11 @@ class ACOSchedule(object):
 
     def Update_BPS(self, path, ObsQ, TimeQ):
         # Update the list of Pareto eficient paths, with path and it's objective values ObsQ and TimeQ (only if it is non dominated).
+        Change = False
         if len(self.BPS) == 0:
             self.BPS.append([path, ObsQ, TimeQ])
             self.ParetoHistorial.append([ObsQ, TimeQ, self.IterationNumber])
+            Change = True
             print 'new non dominated solution', datetime.datetime.now(), 'Obs = ', ObsQ, 'Time = ',TimeQ
         else:
             BPS_Aux = []
@@ -379,9 +472,10 @@ class ACOSchedule(object):
             if flag_pareto:
                 BPS_Aux.append([path, ObsQ, TimeQ])
                 self.ParetoHistorial.append([ObsQ, TimeQ, self.IterationNumber])
+                Change = True
                 print 'new non dominated solution', datetime.datetime.now(), 'Obs = ', ObsQ, 'Time = ',TimeQ
             self.BPS = BPS_Aux
-        return
+        return Change
 
     def Update_iterationBPS(self, path, ObsQ, TimeQ):
         # Update the list of Pareto eficient paths, with path and it's objective values ObsQ and TimeQ (only if it is non dominated).
@@ -437,52 +531,24 @@ class ACOSchedule(object):
                 self.Ph_TimeQ[path[i, 0], path[i + 1, 0]] += addTimeQ
         return
 
-    def ObjectiveValues(self, SCH):
-        # Calculate the value of the objective functions for a factible schedule SCH.
-        ObsQ = 0
-        TimeQ = 0
-        for i in range(np.size(SCH, 0)):
-            ObsQ += np.pi / 2 - self.ZenAn[SCH[i, 1]][SCH[i, 0]]
-            TimeQ += self.TimeFunc(self.T[SCH[i, 0]])
-        return [ObsQ, TimeQ]
-
     def DiscreteDistances(self):
         # Calculate the distances for the discretization of time.
         D = []
         NX = np.size(self.X, 0)
-        for i in range(self.NightDisc):
-            self.obs.date = self.NightBeg + (i + 0.5) * self.Interval
+        i=0
+        for time in self.Times[:,0]:
+            self.obs.date = time
             D.append(np.zeros((NX, NX)))
             for j in range(NX):
                 D[i][j, :] = Time_dist(self.X_obs[i], self.obs, self.X_obs[i][j, :])
-        self.obs.date = self.NightBeg
+            i+=1
         return D
-
-    def DiscreteZenithAngle(self):
-        # Calculate zenith angles for the discretization of time.
-        ZA = []
-        NX = np.size(self.X, 0)
-        for i in range(self.NightDisc):
-            self.obs.date = self.NightBeg + (i + 0.5) * self.Interval
-            [Azi, Alt] = conversion(self.obs, self.X[:, 0], self.X[:, 1])
-            ZA.append(np.pi / 2 - np.array(Alt))
-        return ZA
-
-    def DiscreteAzimuth(self):
-        # Calculate Azimuth angles for the discretization of time.
-        AZ = []
-        NX = np.size(self.X, 0)
-        for i in range(self.NightDisc):
-            self.obs.date = self.NightBeg + (i + 0.5) * self.Interval
-            [Azi, Alt] = conversion(self.obs, self.X[:, 0], self.X[:, 1])
-            AZ.append(Azi)
-        return AZ
 
     def DiscreteFactibles(self):
         # Calculate factible points for the discretization of time.
         Fact = []
-        for i in range(self.NightDisc):
-            self.obs.date = self.NightBeg + (i + 0.5) * self.Interval
+        for time in self.Times[:,0]:
+            self.obs.date = time
             Fact.append(factibles(self.X, self.obs, 0))
         return Fact
 
@@ -511,22 +577,50 @@ class ACOSchedule(object):
             aa = [self.AzAn[Path[i, 1]][Path[i, 0]], np.pi / 2 - self.ZenAn[Path[i, 1]][Path[i, 0]]]
             AA.append(aa)
 
-            self.obs.date = self.NightBeg + (Path[i, 1] + 0.5) * self.Interval
-            dr = deconversion(self.obs, aa[0], aa[1])
+            dr = self.X[Path[i,0]]
+            dr = [dr[1],dr[0]]
             DR.append(dr)
         return [np.array(AA), np.array(DR)]
 
     def MoonPosition(self):
         MAA = []
-        Times = []
         moon = ephem.Moon()
-        for i in range(self.NightDisc):
-            self.obs.date = self.NightBeg + (i + 0.5) * self.Interval
-            print self.obs.date
+        for time in self.Times[:,0]:
+            self.obs.date = time
             moon.compute(self.obs)
-            Times.append(self.obs.date)
             MAA.append([moon.ra, moon.dec])
-        return [np.array(Times), np.array(MAA)]
+        return np.array(MAA)
+
+    def CreateTimes(self,start_date,end_date):
+        self.obs.date = end_date
+        end_date = self.obs.date
+        sun = ephem.Sun()
+        self.obs.date = start_date
+        sun.compute(self.obs)
+        NightEnd = self.obs.next_rising(sun)
+        self.obs.date = NightEnd
+        sun.compute(self.obs)
+        NightBeg = self.obs.previous_setting(sun)
+        Times = []
+
+        while(NightBeg < end_date):
+            self.obs.date = NightBeg
+            ThisNightLength = NightEnd - NightBeg
+            Interval = ThisNightLength / self.ND
+
+
+
+            for i in range(self.ND):
+                self.obs.date = NightBeg + (i + 0.5) * Interval
+                print self.obs.date
+                Times.append([self.obs.date,Interval])
+            self.obs.date = NightEnd
+            NightEnd = self.obs.next_rising(sun)
+            self.obs.date = NightEnd
+            sun.compute(self.obs)
+            NightBeg = self.obs.previous_setting(sun)
+
+        return np.array(Times)
 
     def PlotParetoHistorial(self,title="",show=False):
         # Plots the objective values of the non dominated solutions found during the whole process, even if they were eliminated.
@@ -549,3 +643,120 @@ class ACOSchedule(object):
         if(show):
             plt.show(block=False)
         return fig
+
+    def set_time(self):
+        self.timenow = datetime.datetime.now()
+
+    def saveACO(self):
+        title = "videos/%s-%s-%s_%s-%s-%s_ACO_Save" % (self.timenow.year,self.timenow.month,self.timenow.day,self.timenow.hour,self.timenow.minute,self.timenow.second)
+        np.save(title,[self])
+
+
+def Ant_Multi(ACO,Lambda):
+    return Ants_ext(ACO,Lambda)
+
+def Ant_Pool(ACO,Lambda,output):
+    # print "Ant %d : Begining" % (Lambda*(ACO.m-1),)
+    # print os.getppid()
+    output.put(Ants_ext(ACO,Lambda))
+    # print "Ant %d : End" % (Lambda*(ACO.m-1),)
+
+def Ants_ext(ACO, Lambda):
+    # This function runs one ant for the ACS algorithm.
+    rd.seed(os.urandom(624))
+
+    TotalT = 0
+    LocalT = 0
+    T_ant = np.copy(ACO.T)
+    Path = []
+
+    U = rd.random()
+    if U <= Lambda:
+        tau = ACO.Ph_ObsQBeg * ACO.Fact[0]
+        tau = tau / np.sum(tau)
+        index = ACO.ChooseStep(tau)
+    else:
+        tau = ACO.Ph_TimeQBeg * ACO.Fact[0]
+        tau = tau / np.sum(tau)
+        index = ACO.ChooseStep(tau)
+
+    Path.append([index, 0])
+    ActualPoint = index
+    ActualPeriod = 0
+    T_ant[index] = 0.0
+    TimeQ = 0.0
+    ObsQ = 0.0
+
+    flagOverNight = False
+
+    while TotalT <= ACO.NightLength:
+        # U = rd.random()
+
+        etaD = 1. / (ACO.Dist[ActualPeriod][ActualPoint, :] + np.min(
+            filter(lambda x: x > 0, ACO.Dist[ActualPeriod][ActualPoint, :])) / 10.)
+        etaD = etaD * ACO.Fact[ActualPeriod]
+        etaD = etaD / np.sum(etaD)
+
+        etaZ = 1. / ACO.ZenAn[ActualPeriod]
+        #etaZ = 3*np.pi/(2*(ACO.ZenAn[ActualPeriod]+np.pi))
+        etaZ = etaZ * ACO.Fact[ActualPeriod]
+        etaZ = etaZ / sum(etaZ)
+
+        #etaT = T_ant
+        etaT = np.power(2,T_ant)-1.0
+        #etaT = (np.power(2,T_ant)+128.)/192.
+        etaT = 1.0 * etaT * ACO.Fact[ActualPeriod]
+        etaT = etaT / sum(etaT)
+
+        eta = np.power(etaD, 2) * np.power(etaZ, 2) * np.power(etaT, 1)
+        #eta = etaD * etaZ * etaT
+
+        if U <= Lambda:
+            tau = ACO.Ph_ObsQ[ActualPoint, :] * ACO.Fact[ActualPeriod]
+            tau = tau / np.sum(tau)
+            index = ACO.ChooseStep(tau * eta)
+
+        else:
+            tau = ACO.Ph_TimeQ[ActualPoint, :] * ACO.Fact[ActualPeriod]
+            tau = tau / np.sum(tau)
+            index = ACO.ChooseStep(tau * eta)
+
+        TotalT += ACO.Dist[ActualPeriod][ActualPoint, index] + ACO.ObservationTime
+        LocalT += ACO.Dist[ActualPeriod][ActualPoint, index] + ACO.ObservationTime
+        if(LocalT >= ACO.Times[ActualPeriod,1]):
+            LocalT -= ACO.Times[ActualPeriod,1]
+            NewPeriod = ActualPeriod+1
+            T_ant += ACO.Times[ActualPeriod,1]
+            if(NewPeriod%ACO.ND == 0):
+                flagOverNight = True
+            if(NewPeriod >= len(ACO.Times)):
+                break
+        else :
+            NewPeriod = ActualPeriod
+
+        if(not(flagOverNight)):
+            ObsQ += np.pi / 2 - ACO.ZenAn[NewPeriod][index]
+            TimeQ += ACO.TimeFunc(T_ant[index])
+            T_ant[index] = 0.0
+            # ACO.Ph_ObsQ[ActualPoint, index] *= (1 - ACO.chi)
+            # ACO.Ph_ObsQ[ActualPoint, index] += ACO.chi
+            # ACO.Ph_TimeQ[ActualPoint, index] *= (1 - ACO.chi)
+            # ACO.Ph_TimeQ[ActualPoint, index] += ACO.chi
+
+            ActualPoint = index
+            ActualPeriod = NewPeriod
+            Path.append([ActualPoint, ActualPeriod])
+        else:
+            flagOverNight = False
+            TotalT = sum(ACO.Times[0:NewPeriod,1])
+            LocalT = 0.0
+            ActualPeriod = NewPeriod
+
+    # [ObsQ, TimeQ] = ACO.ObjectiveValues(np.array(Path, dtype=int))
+
+    return [np.array(Path, dtype=int), ObsQ, TimeQ]
+
+
+def Ant_Pipe(ACO,Lambda,conn):
+    A = Ants_ext(ACO,Lambda)
+    conn.send(A)

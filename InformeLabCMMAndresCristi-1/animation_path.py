@@ -24,8 +24,10 @@ def animation_path(sched,rot,title,*args, **kwargs):
     points.set_cmap(cmapto)
 
     def animate(i,data,color):
-        points.set_offsets(data[0:i,:])
-        points.set_array(color[0:i])
+        # start_data = max(0,i-100)
+        start_data = 0
+        points.set_offsets(data[start_data:i,:])
+        points.set_array(color[start_data:i])
         return points,
 
     anim = animation.FuncAnimation(fig, animate,fargs=(offto,arrayto),frames=np.size(offto,0), interval=20, blit=True)
