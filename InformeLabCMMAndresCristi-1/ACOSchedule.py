@@ -7,11 +7,9 @@ import numpy as np
 import numpy.random as npr
 import random as rd
 import os
+import time
 
-from functions import Time_dist
-from functions import conversion
-from functions import deconversion
-from functions import factibles
+from functions import *
 
 
 class ACOSchedule(object):
@@ -33,6 +31,7 @@ class ACOSchedule(object):
         self.NormObsQ = 1
         self.NormTimeQ = 1
         self.m = 10  # Number of ants per iteration.
+        # self.Filters = 1    # Number of Filters used
         # ------------------------
 
         # Compute Night parameters
@@ -96,7 +95,8 @@ class ACOSchedule(object):
         self.ChangedIterations = []
         self.ParetoHistorial = []
 
-        print('Construccion Completa\n')
+
+        print('Construction Complete\n')
         print datetime.datetime.now()
 
     def initialise_from_file(self,title):
@@ -151,7 +151,7 @@ class ACOSchedule(object):
         self.ChangedIterations = list(ACO.ChangedIterations)
         self.ParetoHistorial = ACO.ParetoHistorial
 
-        print('Construccion Completa\n')
+        print('Construction Complete\n')
         print datetime.datetime.now()
 
     def RunACO_Pheromone(self, SuperAntIt, AntIterations):
@@ -244,36 +244,6 @@ class ACOSchedule(object):
         #     # print ObsQ,TimeQ
         #     self.Update_iterationBPS(Path, ObsQ, TimeQ)
 
-        # pool = mp.Pool(processes=8)
-        # results = [pool.apply(Ant_Multi, args=(self,j / (self.m - 1),)) for j in range(m)]
-        # for [Path, ObsQ, TimeQ] in results:
-        #     # print ObsQ,TimeQ
-        #     self.Update_iterationBPS(Path, ObsQ, TimeQ)
-        # pool.close()
-
-        # output = mp.Queue()
-        # processes = [mp.Process(target=Ant_Pool, args=(self, j / (self.m - 1.0), output)) for j in range(self.m)]
-        # for p in processes:
-        #     p.start()
-        # # print mp.active_children()
-        # results = []
-        # for p in processes:
-        #     # print output.qsize()
-        #     while (output.qsize() > 0):
-        #         results.append(output.get())
-        #     p.join()
-        #     # p.terminate()
-        # while (output.qsize() > 0):
-        #     results.append(output.get())
-        # # print mp.active_children()
-        # print len(results)
-        # # results = [output.get() for p in processes]
-        # # for p in processes:
-        # #     p.terminate()
-        # for [Path, ObsQ, TimeQ] in results:
-        #     # print ObsQ,TimeQ
-        #     self.Update_iterationBPS(Path, ObsQ, TimeQ)
-
         Pipes = [mp.Pipe() for j in range(self.m)]
         processes = [mp.Process(target=Ant_Pipe, args=(self, j / (self.m - 1.0), Pipes[j][1])) for j in range(self.m)]
         for p in processes:
@@ -285,12 +255,6 @@ class ACOSchedule(object):
             results.append(Pipes[j][0].recv())
             j += 1
             p.join()
-            # p.terminate()
-        # print mp.active_children()
-        # print len(results)
-        # results = [output.get() for p in processes]
-        # for p in processes:
-        #     p.terminate()
         for [Path, ObsQ, TimeQ] in results:
             # print ObsQ,TimeQ
             self.Update_iterationBPS(Path, ObsQ, TimeQ)
@@ -303,7 +267,6 @@ class ACOSchedule(object):
             self.ChangedIterations.append(self.IterationNumber)
 
         self.Update_Pheromone_Iteration()
-        #print np.min(self.Ph_ObsQ),np.max(self.Ph_ObsQ),np.min(self.Ph_TimeQ),np.max(self.Ph_TimeQ)
         return
 
     def Ants(self, Lambda):
@@ -325,6 +288,7 @@ class ACOSchedule(object):
             index = self.ChooseStep(tau)
 
         Path.append([index, 0])
+        TotalT += self.ObservationTime
         ActualPoint = index
         ActualPeriod = 0
         T_ant[index] = 0.0
@@ -379,7 +343,8 @@ class ACOSchedule(object):
                 NewPeriod = ActualPeriod
 
             if(not(flagOverNight)):
-                ObsQ += np.pi / 2 - self.ZenAn[NewPeriod][index]
+                ObsQ += np.pi / 2 - self.ZenAn[NewPeriod][index]        #Observation Quality based on zenith angle
+                # ObsQ += 1/np.cos(self.ZenAn[NewPeriod][index])        #Observation quality based on air mass
                 TimeQ += self.TimeFunc(T_ant[index])
                 T_ant[index] = 0.0
                 # self.Ph_ObsQ[ActualPoint, index] *= (1 - self.chi)
@@ -396,7 +361,6 @@ class ACOSchedule(object):
                 LocalT = 0.0
                 ActualPeriod = NewPeriod
 
-        # [ObsQ, TimeQ] = self.ObjectiveValues(np.array(Path, dtype=int))
 
         return [np.array(Path, dtype=int), ObsQ, TimeQ]
 
@@ -465,9 +429,11 @@ class ACOSchedule(object):
             flag_pareto = 1
             while 0 < len(self.BPS):
                 A = self.BPS.pop()
-                if (((ObsQ > A[1]) * (TimeQ >= A[2])) + ((ObsQ >= A[1]) * (TimeQ > A[2]))) == 0:
+                # if (((ObsQ > A[1]) * (TimeQ >= A[2])) + ((ObsQ >= A[1]) * (TimeQ > A[2]))) == 0:            #Test with zenith angle quality
+                if (((ObsQ < A[1]) * (TimeQ >= A[2])) + ((ObsQ <= A[1]) * (TimeQ > A[2]))) == 0:        #Test with air mass quality
                     BPS_Aux.append(A)
-                    if (ObsQ <= A[1]) * (TimeQ <= A[2]):
+                    # if (ObsQ <= A[1]) * (TimeQ <= A[2]):            #Test with zenith angle quality
+                    if (ObsQ >= A[1]) * (TimeQ <= A[2]):        #Test with air mass quality
                         flag_pareto = 0
             if flag_pareto:
                 BPS_Aux.append([path, ObsQ, TimeQ])
@@ -484,15 +450,18 @@ class ACOSchedule(object):
             self.NormObsQ = ObsQ
             self.NormTimeQ = TimeQ
         else:
-            self.NormObsQ = max(self.NormObsQ,ObsQ)
+            # self.NormObsQ = max(self.NormObsQ,ObsQ)         #Norm for zenith angle quality
+            self.NormObsQ = min(self.NormObsQ,ObsQ)          #Norm for air mass quality
             self.NormTimeQ = max(self.NormTimeQ,TimeQ)
             BPS_Aux = []
             flag_pareto = 1
             while 0 < len(self.iterationBPS):
                 A = self.iterationBPS.pop()
-                if (((ObsQ > A[1]) * (TimeQ >= A[2])) + ((ObsQ >= A[1]) * (TimeQ > A[2]))) == 0:
+                # if (((ObsQ > A[1]) * (TimeQ >= A[2])) + ((ObsQ >= A[1]) * (TimeQ > A[2]))) == 0:            #Test with zenith angle quality
+                if (((ObsQ < A[1]) * (TimeQ >= A[2])) + ((ObsQ <= A[1]) * (TimeQ > A[2]))) == 0:        #Test with air mass quality
                     BPS_Aux.append(A)
-                    if (ObsQ <= A[1]) * (TimeQ <= A[2]):
+                    # if (ObsQ <= A[1]) * (TimeQ <= A[2]):            #Test with zenith angle quality
+                    if (ObsQ >= A[1]) * (TimeQ <= A[2]):        #Test with air mass quality
                         flag_pareto = 0
             if flag_pareto:
                 BPS_Aux.append([path, ObsQ, TimeQ])
@@ -517,7 +486,8 @@ class ACOSchedule(object):
 
     def Update_Pheromone_Iteration(self):
         for j in range(len(self.iterationBPS)):
-            addObsQ = 10*self.iterationBPS[j][1] / self.NormObsQ
+            # addObsQ = 10*self.iterationBPS[j][1] / self.NormObsQ            #Pheromone with zenith angle quality
+            addObsQ = 10*self.NormObsQ / self.iterationBPS[j][1]        #Pheromone with air mass quality
             addTimeQ = 10*self.iterationBPS[j][2] / self.NormTimeQ
             path = self.iterationBPS[j][0]
             self.Ph_ObsQBeg[path[0]] *= (1 - self.rho)
@@ -533,15 +503,84 @@ class ACOSchedule(object):
 
     def DiscreteDistances(self):
         # Calculate the distances for the discretization of time.
+
+        t_start = time.time()
+        # D_p = []
+        # NX = np.size(self.X, 0)
+        # i = 0
+        # results = []
+        # pool = mp.Pool(processes=4)
+        # for time_l in self.Times[:, 0]:
+        #     self.obs.date = time_l
+        #     obs = (self.obs.date, self.obs.epoch, float(self.obs.lat), float(self.obs.lon), self.obs.elevation, self.obs.temp,self.obs.pressure)
+        #     D_p.append(np.zeros((NX, NX)))
+        #
+        #     # results.append(pool.imap(lambda j : Time_dist_map(self.X_obs[i], obs, self.X_obs[i],i,j), range(NX)))
+        #     results.append([pool.apply_async(Time_dist_Multi, args=(self.X_obs[i], obs, self.X_obs[i][j, :],i, j)) for j in range(NX)])
+        #     i += 1
+        #
+        # pool.close()
+        # pool.join()
+        # pool.terminate()
+        # output = [[p.get() for p in r] for r in results]
+        # for output_aux in output:
+        #     for o in output_aux:
+        #         D_p[o[0]][o[1], :] = o[2]
+        # print "Time for parallel : " + str(time.time() - t_start)
+
+        # t_start = time.time()
+        # D_p = []
+        # NX = np.size(self.X, 0)
+        # i = 0
+        # results = []
+        # Pipes = []
+        # processes = []
+        # for time_l in self.Times[:, 0]:
+        #     self.obs.date = time_l
+        #     obs = (self.obs.date, self.obs.epoch, float(self.obs.lat), float(self.obs.lon), self.obs.elevation, self.obs.temp,self.obs.pressure)
+        #     D_p.append(np.zeros((NX, NX)))
+        #     for j in range(NX):
+        #         Pipes.append(mp.Pipe())
+        #         processes.append(mp.Process(target=Time_dist_pipe, args=(self.X_obs[i], obs, self.X_obs[i][j, :], i, j, Pipes[-1][0])))
+        #         processes[-1].start()
+        #     i += 1
+        #
+        # print "Starting Processes : ",len(processes)
+        #
+        # # j=0
+        # # for p in processes:
+        # #     if(j%100 == 0):
+        # #         print j
+        # #     j += 1
+        # #     p.start()
+        #
+        # print "All Processes Started"
+        #
+        # j = 0
+        # for p in processes:
+        #     results.append(Pipes[j][1].recv())
+        #     j += 1
+        #     p.join()
+        #
+        #
+        # for o in results:
+        #     D_p[o[0]][o[1], :] = o[2]
+        # print "Time for parallel : " + str(time.time() - t_start)
+
+
+        t_start = time.time()
+
         D = []
         NX = np.size(self.X, 0)
-        i=0
-        for time in self.Times[:,0]:
-            self.obs.date = time
+        i = 0
+        for time_l in self.Times[:, 0]:
+            self.obs.date = time_l
             D.append(np.zeros((NX, NX)))
             for j in range(NX):
                 D[i][j, :] = Time_dist(self.X_obs[i], self.obs, self.X_obs[i][j, :])
             i+=1
+        print "Time for sequential : " + str(time.time()-t_start)
+        # print np.array_equal(np.array(D),np.array(D_p))
         return D
 
     def DiscreteFactibles(self):
@@ -647,19 +686,23 @@ class ACOSchedule(object):
     def set_time(self):
         self.timenow = datetime.datetime.now()
 
-    def saveACO(self):
-        title = "videos/%s-%s-%s_%s-%s-%s_ACO_Save" % (self.timenow.year,self.timenow.month,self.timenow.day,self.timenow.hour,self.timenow.minute,self.timenow.second)
+    def saveACO(self,title=""):
+        if(title == ""):
+            title = "videos/%s-%s-%s_%s-%s-%s_ACO_Save" % (self.timenow.year,self.timenow.month,self.timenow.day,self.timenow.hour,self.timenow.minute,self.timenow.second)
+        if(title[-4:]!=".npy"):
+            title = title + ".npy"
         np.save(title,[self])
+        return title
 
 
-def Ant_Multi(ACO,Lambda):
-    return Ants_ext(ACO,Lambda)
-
-def Ant_Pool(ACO,Lambda,output):
-    # print "Ant %d : Begining" % (Lambda*(ACO.m-1),)
-    # print os.getppid()
-    output.put(Ants_ext(ACO,Lambda))
-    # print "Ant %d : End" % (Lambda*(ACO.m-1),)
+# def Ant_Multi(ACO,Lambda):
+#     return Ants_ext(ACO,Lambda)
+#
+# def Ant_Pool(ACO,Lambda,output):
+#     # print "Ant %d : Begining" % (Lambda*(ACO.m-1),)
+#     # print os.getppid()
+#     output.put(Ants_ext(ACO,Lambda))
+#     # print "Ant %d : End" % (Lambda*(ACO.m-1),)
 
 def Ants_ext(ACO, Lambda):
     # This function runs one ant for the ACS algorithm.
@@ -735,7 +778,8 @@ def Ants_ext(ACO, Lambda):
             NewPeriod = ActualPeriod
 
         if(not(flagOverNight)):
-            ObsQ += np.pi / 2 - ACO.ZenAn[NewPeriod][index]
+            # ObsQ += np.pi / 2 - ACO.ZenAn[NewPeriod][index]         #Observation quality based on zenith angle
+            ObsQ += 1 / np.cos(ACO.ZenAn[NewPeriod][index])        #Observation quality based on air mass
             TimeQ += ACO.TimeFunc(T_ant[index])
             T_ant[index] = 0.0
             # ACO.Ph_ObsQ[ActualPoint, index] *= (1 - ACO.chi)
@@ -755,7 +799,6 @@ def Ants_ext(ACO, Lambda):
     # [ObsQ, TimeQ] = ACO.ObjectiveValues(np.array(Path, dtype=int))
 
     return [np.array(Path, dtype=int), ObsQ, TimeQ]
-
 
 def Ant_Pipe(ACO,Lambda,conn):
     A = Ants_ext(ACO,Lambda)
